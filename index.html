@@ -9,7 +9,18 @@
 <meta name="apple-mobile-web-app-title" content="StockNote">
 <meta name="theme-color" content="#0d1117">
 <link rel="apple-touch-icon" href="icon-192.png">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script>
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('service-worker.js')
+        .then(reg => console.log('SW registered:', reg.scope))
+        .catch(err => console.log('SW error:', err));
+    });
+  }
+</script>
 <style>
   :root {
     --teal: #1a9e7a; --teal-dark: #0f6e56; --teal-mid: #5dcaa5;
@@ -400,7 +411,7 @@
       </div>
       <!-- US株サマリー -->
       <div class="summary-card" id="us-summary-card" style="animation-delay:0.25s;display:none;grid-column:1/-1;background:rgba(59,130,246,0.05);border-color:rgba(96,165,250,0.2)">
-        <div class="card-label" style="color:#60a5fa">🇺🇸 US株（円建て・$参考）</div>
+        <div class="card-label" style="color:#60a5fa">🇺🇸 US株（円建て・$参考）<span id="us-count-badge" style="font-size:11px;font-weight:400;margin-left:6px;opacity:0.7"></span></div>
         <div id="us-summary-body" style="display:flex;gap:24px;flex-wrap:wrap;margin-top:6px"></div>
       </div>
       <!-- 全体合計（円換算） -->
@@ -1024,6 +1035,8 @@ function render(){
   let usBody = document.getElementById('us-summary-body');
   if (usStocks.length && usCard && usBody) {
     usCard.style.display = '';
+    let usBadge = document.getElementById('us-count-badge');
+    if (usBadge) usBadge.textContent = usStocks.length + '銘柄';
     // データは円建て・表示は¥メイン($ドル)カッコ
     let usCost = usStocks.reduce((t,s) => t + s.buy*s.shares, 0);
     let usVal  = usStocks.reduce((t,s) => t + s.current*s.shares, 0);
@@ -2675,8 +2688,16 @@ function sortedStocks(arr) {
         <div class="form-label" id="em-target-label">目標価格（円）</div>
         <div class="input-prefix-wrap">
           <span class="input-prefix" id="em-target-prefix" style="display:none">$</span>
-          <input class="form-input" id="em-target" type="number" placeholder="例: 3500" />
+          <input class="form-input" id="em-target" type="number" placeholder="例: 3500" oninput="calcTargetPctFromPrice()" />
         </div>
+      </div>
+      <div class="form-group">
+        <div class="form-label">目標上昇率（%）</div>
+        <div class="input-prefix-wrap">
+          <span class="input-prefix" style="display:block;font-size:11px;color:var(--text3)">+</span>
+          <input class="form-input" id="em-target-pct" type="number" placeholder="例: 20" step="0.1" oninput="calcTargetPriceFromPct()" style="padding-left:22px" />
+        </div>
+        <div id="em-target-preview" style="font-size:11px;color:var(--teal-mid);margin-top:4px"></div>
       </div>
       <div class="form-group full">
         <div class="form-label">口座種別</div>
@@ -2817,6 +2838,15 @@ function openEditModal() {
   document.getElementById('em-shares').value = s.shares;
   document.getElementById('em-div').value    = isUS ? (s.div ? Math.round(s.div / rate * 100) / 100 : '') : (s.div || '');
   document.getElementById('em-target').value = isUS ? (s.targetPrice ? Math.round(s.targetPrice / rate * 100) / 100 : '') : (s.targetPrice || '');
+  // 目標%を初期化
+  if (s.targetPrice && s.buy) {
+    var pct = ((s.targetPrice - s.buy) / s.buy * 100);
+    document.getElementById('em-target-pct').value = Math.round(pct * 10) / 10;
+    document.getElementById('em-target-preview').textContent = '取得価格から ' + (pct >= 0 ? '+' : '') + pct.toFixed(1) + '%';
+  } else {
+    document.getElementById('em-target-pct').value = '';
+    document.getElementById('em-target-preview').textContent = '';
+  }
   setEmAcct(s.acct || 'NISA');
   document.getElementById('sim-price').value  = '';
   document.getElementById('sim-shares').value = '';
@@ -2838,6 +2868,27 @@ function setEmAcct(val) {
   document.getElementById('em-acct').value = val;
   document.getElementById('em-btn-nisa').className    = 'acct-btn' + (val==='NISA' ? ' active-nisa'    : '');
   document.getElementById('em-btn-tokutei').className = 'acct-btn' + (val==='特定' ? ' active-tokutei' : '');
+}
+
+
+function calcTargetPctFromPrice() {
+  var s = stocks[detailIdx]; if (!s) return;
+  var price = parseFloat(document.getElementById('em-target').value);
+  var buy = s.buy;
+  if (!price || !buy) { document.getElementById('em-target-pct').value = ''; document.getElementById('em-target-preview').textContent = ''; return; }
+  var pct = ((price - buy) / buy * 100);
+  document.getElementById('em-target-pct').value = Math.round(pct * 10) / 10;
+  document.getElementById('em-target-preview').textContent = '取得価格から ' + (pct >= 0 ? '+' : '') + pct.toFixed(1) + '%';
+}
+
+function calcTargetPriceFromPct() {
+  var s = stocks[detailIdx]; if (!s) return;
+  var pct = parseFloat(document.getElementById('em-target-pct').value);
+  var buy = s.buy;
+  if (pct === undefined || isNaN(pct) || !buy) { document.getElementById('em-target-preview').textContent = ''; return; }
+  var price = buy * (1 + pct / 100);
+  document.getElementById('em-target').value = Math.round(price * 100) / 100;
+  document.getElementById('em-target-preview').textContent = '目標価格: ' + (s.market === 'US' ? '$' + price.toFixed(2) : '¥' + Math.round(price).toLocaleString());
 }
 
 function calcAvg() {

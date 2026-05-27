@@ -1163,14 +1163,14 @@ function render(){
 
   // Pre達成リスト（目標75%以上、未達成）
   let preAchieved = stocks.filter(s => {
-    // 目標価格：進捗75%以上・未達成
     let tg = targetProgress(s);
+    let sg = stopProgress(s);
     let targetPre = tg && !tg.achieved && tg.progress >= 75;
-    // 配当10年分：含み益が年間配当×7.5年以上・10年未満
+    let stopPre   = sg && !sg.achieved && sg.progress >= 75;
     let da = divAfter(s);
     let pnlVal = (s.current - s.buy) * s.shares;
     let div10Pre = da > 0 && pnlVal >= da * 7.5 && pnlVal < da * 10;
-    return targetPre || div10Pre;
+    return targetPre || stopPre || div10Pre;
   });
   let pg = document.getElementById('pre-achieved-grid');
   if (pg) {
@@ -1185,27 +1185,32 @@ function render(){
         let remainPct = tg ? Math.abs(tg.pctToTarget) : 0;
         let progress = tg ? tg.progress : 0;
         let da = divAfter(s);
-        return `<div class="pre-achieved-card" style="animation-delay:${i*0.08}s">
+        let isDownPre = tg && !tg.isUp;
+        let preAccent = isDownPre ? 'rgba(239,68,68,0.6)' : 'rgba(34,197,94,0.6)';
+        let preBorder = isDownPre ? 'border-color:rgba(239,68,68,0.3)' : '';
+        let preBar = isDownPre ? 'background:linear-gradient(90deg,#ef4444,#f87171)' : 'background:linear-gradient(90deg,var(--teal),var(--green))';
+        let preIcon = isDownPre ? '⚠️' : '⏳';
+        return `<div class="pre-achieved-card" style="animation-delay:${i*0.08}s;${preBorder}">
           <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:8px">
             <div style="min-width:0;flex:1;margin-right:8px">
               <div style="font-size:13px;font-weight:600;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${s.name}</div>
-              <div style="font-size:10px;color:rgba(34,197,94,0.6);font-family:var(--mono);margin-top:1px">${s.code} · ${s.market} · ${s.acct}</div>
+              <div style="font-size:10px;color:${preAccent};font-family:var(--mono);margin-top:1px">${s.code} · ${s.market} · ${s.acct}</div>
             </div>
-            <div style="font-size:20px;flex-shrink:0">⏳</div>
+            <div style="font-size:20px;flex-shrink:0">${preIcon}</div>
           </div>
-          <div style="height:1px;background:linear-gradient(90deg,transparent,rgba(34,197,94,0.2),transparent);margin-bottom:8px"></div>
+          <div style="height:1px;background:linear-gradient(90deg,transparent,${isDownPre?'rgba(239,68,68,0.2)':'rgba(34,197,94,0.2)'},transparent);margin-bottom:8px"></div>
           <div class="achieved-metrics">
             ${tg ? `<div class="achieved-metric">
-              <div class="achieved-metric-label">目標価格</div>
-              <div class="achieved-metric-value" style="color:var(--green)">¥${Math.round(s.targetPrice).toLocaleString()}</div>
+              <div class="achieved-metric-label">${isDownPre?'損切ライン':'目標価格'}</div>
+              <div class="achieved-metric-value" style="color:${isDownPre?'var(--red)':'var(--green)'}">${fmtPrice(targetPriceShow, s.market)}</div>
             </div>
             <div class="achieved-metric">
               <div class="achieved-metric-label">現在価格</div>
-              <div class="achieved-metric-value" style="color:var(--green)">¥${s.current.toLocaleString()}</div>
+              <div class="achieved-metric-value" style="color:${isDownPre?'var(--red)':'var(--green)'}">${fmtPrice(s.current, s.market)}</div>
             </div>
             <div class="achieved-metric">
               <div class="achieved-metric-label">達成まで</div>
-              <div class="achieved-metric-value" style="color:var(--green)">${tg.isUp?'+':''}${remainPct.toFixed(1)}%</div>
+              <div class="achieved-metric-value" style="color:${isDownPre?'var(--red)':'var(--green)'}">${tg.isUp?'+':''}${remainPct.toFixed(1)}%</div>
             </div>` : ''}
             <div class="achieved-metric">
               <div class="achieved-metric-label">含み損益</div>
@@ -1221,7 +1226,7 @@ function render(){
               <span>目標進捗</span><span>${progress.toFixed(0)}%</span>
             </div>
             <div class="target-bar-bg">
-              <div class="target-bar-fill" style="width:${progress}%;background:linear-gradient(90deg,var(--teal),var(--green))"></div>
+              <div class="target-bar-fill" style="width:${progress}%;${preBar}"></div>
             </div>
           </div>` : ''}
         </div>`;
@@ -1230,7 +1235,11 @@ function render(){
   }
 
   // ── 達成リスト ──
-  let achievedTarget = stocks.filter(s => { let tg=targetProgress(s); return tg && tg.achieved; });
+  let achievedTarget = stocks.filter(s => {
+    let tg = targetProgress(s);
+    let sg = stopProgress(s);
+    return (tg && tg.achieved) || (sg && sg.achieved);
+  });
   let achievedDiv10  = stocks.filter(s => { let da=divAfter(s); let pv=(s.current-s.buy)*s.shares; return da>0 && pv>=da*10; });
   document.getElementById('achieved-count').textContent = achievedTarget.length + achievedDiv10.length;
 
@@ -1241,31 +1250,43 @@ function render(){
     } else {
       ag.innerHTML = achievedTarget.map((s,i)=>{
         let tg = targetProgress(s);
+        let sg = stopProgress(s);
+        // 上昇達成 or 損切り達成
+        let activeTarget = (tg && tg.achieved) ? tg : sg;
+        let isDown = activeTarget ? !activeTarget.isUp : false;
+        let targetPriceShow = isDown ? s.stopPrice : s.targetPrice;
+        tg = activeTarget; // 以下の描画でtgを流用
         let pnlVal = (s.current-s.buy)*s.shares;
         let pnlCls = pnlVal>=0?'pos':'neg';
         let da = divAfter(s);
         let divYrs = da>0 ? (pnlVal/da).toFixed(1)+'年分' : '—';
-        return `<div class="achieved-card" style="animation-delay:${i*0.07}s">
+        let cardBorder = isDown ? 'border-color:rgba(239,68,68,0.4);background:rgba(239,68,68,0.04)' : '';
+        let accentColor = isDown ? 'var(--red)' : 'var(--green)';
+        let codeColor = isDown ? 'rgba(239,68,68,0.7)' : 'rgba(34,197,94,0.7)';
+        let icon = isDown ? '🔻' : '🎯';
+        let badgeLabel = isDown ? '⚠ 損切ライン達成' : '✓ 達成';
+        let badgeStyle = isDown ? 'background:rgba(239,68,68,0.15);color:var(--red);border:1px solid rgba(239,68,68,0.3);border-radius:6px;padding:2px 8px;font-size:10px;font-weight:600' : '';
+        return `<div class="achieved-card" style="animation-delay:${i*0.07}s;${cardBorder}">
           <div class="achieved-header">
             <div style="min-width:0;flex:1;margin-right:8px">
               <div style="font-size:13px;font-weight:600;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${s.name}</div>
-              <div style="font-size:10px;color:rgba(34,197,94,0.7);font-family:var(--mono);margin-top:1px">${s.code} · ${s.market} · ${s.acct}</div>
-              <span class="stock-target-badge target-achieved" style="margin-top:4px;display:inline-flex">✓ 達成</span>
+              <div style="font-size:10px;color:${codeColor};font-family:var(--mono);margin-top:1px">${s.code} · ${s.market} · ${s.acct}</div>
+              ${isDown ? `<span style="${badgeStyle};margin-top:4px;display:inline-flex">${badgeLabel}</span>` : `<span class="stock-target-badge target-achieved" style="margin-top:4px;display:inline-flex">${badgeLabel}</span>`}
             </div>
-            <div style="font-size:20px;flex-shrink:0">🎯</div>
+            <div style="font-size:20px;flex-shrink:0">${icon}</div>
           </div>
           <div class="achieved-metrics">
             <div class="achieved-metric">
-              <div class="achieved-metric-label">目標価格</div>
-              <div class="achieved-metric-value" style="color:var(--green)">¥${Math.round(s.targetPrice).toLocaleString()}</div>
+              <div class="achieved-metric-label">${isDown?'損切ライン':'目標価格'}</div>
+              <div class="achieved-metric-value" style="color:${accentColor}">${fmtPrice(targetPriceShow, s.market)}</div>
             </div>
             <div class="achieved-metric">
               <div class="achieved-metric-label">現在価格</div>
-              <div class="achieved-metric-value" style="color:var(--green)">¥${s.current.toLocaleString()}</div>
+              <div class="achieved-metric-value" style="color:${accentColor}">${fmtPrice(s.current, s.market)}</div>
             </div>
             <div class="achieved-metric">
-              <div class="achieved-metric-label">目標超過</div>
-              <div class="achieved-metric-value" style="color:var(--green)">+${Math.abs(tg.pctToTarget).toFixed(1)}%</div>
+              <div class="achieved-metric-label">${isDown?'下落超過':'目標超過'}</div>
+              <div class="achieved-metric-value" style="color:${accentColor}">${isDown?'':'+'}${Math.abs(tg.pctToTarget).toFixed(1)}%</div>
             </div>
             <div class="achieved-metric">
               <div class="achieved-metric-label">含み損益</div>
@@ -1628,18 +1649,23 @@ function updateTargetPreview() {
 }
 
 function targetProgress(s) {
+  // 上昇目標
   if (!s.targetPrice || !s.current || !s.buy) return null;
-  let isUp = s.targetPrice >= s.buy;
-  let achieved = isUp ? s.current >= s.targetPrice : s.current <= s.targetPrice;
-  let progress;
-  if (isUp) {
-    progress = Math.min(((s.current - s.buy) / (s.targetPrice - s.buy)) * 100, 100);
-  } else {
-    progress = Math.min(((s.buy - s.current) / (s.buy - s.targetPrice)) * 100, 100);
-  }
+  let achieved = s.current >= s.targetPrice;
+  let progress = Math.min(((s.current - s.buy) / (s.targetPrice - s.buy)) * 100, 100);
   let pctToTarget = ((s.targetPrice - s.current) / s.current * 100);
   let pctFromBuy  = ((s.targetPrice - s.buy) / s.buy * 100);
-  return { isUp, achieved, progress: Math.max(0, progress), pctToTarget, pctFromBuy };
+  return { isUp: true, achieved, progress: Math.max(0, progress), pctToTarget, pctFromBuy };
+}
+
+function stopProgress(s) {
+  // 下落目標（損切りライン）
+  if (!s.stopPrice || !s.current || !s.buy) return null;
+  let achieved = s.current <= s.stopPrice;
+  let progress = Math.min(((s.buy - s.current) / (s.buy - s.stopPrice)) * 100, 100);
+  let pctToTarget = ((s.stopPrice - s.current) / s.current * 100);
+  let pctFromBuy  = ((s.stopPrice - s.buy) / s.buy * 100);
+  return { isUp: false, achieved, progress: Math.max(0, progress), pctToTarget, pctFromBuy };
 }
 
 
@@ -2684,20 +2710,47 @@ function sortedStocks(arr) {
           <input class="form-input" id="em-div" type="number" placeholder="例: 60" />
         </div>
       </div>
-      <div class="form-group">
-        <div class="form-label" id="em-target-label">目標価格（円）</div>
-        <div class="input-prefix-wrap">
-          <span class="input-prefix" id="em-target-prefix" style="display:none">$</span>
-          <input class="form-input" id="em-target" type="number" placeholder="例: 3500" oninput="calcTargetPctFromPrice()" />
+      <!-- 目標価格（上昇） -->
+      <div class="form-group full" style="background:rgba(34,197,94,0.05);border:1px solid rgba(34,197,94,0.2);border-radius:10px;padding:10px">
+        <div style="font-size:11px;font-weight:600;color:var(--green);margin-bottom:8px">📈 上昇目標</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <div>
+            <div class="form-label" id="em-target-label" style="font-size:11px">目標価格</div>
+            <div class="input-prefix-wrap">
+              <span class="input-prefix" id="em-target-prefix" style="display:none">$</span>
+              <input class="form-input" id="em-target" type="number" placeholder="例: 3500" oninput="calcTargetPctFromPrice('up')" />
+            </div>
+          </div>
+          <div>
+            <div class="form-label" style="font-size:11px">上昇率（%）</div>
+            <div class="input-prefix-wrap">
+              <span class="input-prefix" style="display:block;font-size:11px;color:var(--text3)">+</span>
+              <input class="form-input" id="em-target-pct" type="number" placeholder="例: 20" step="0.1" oninput="calcTargetPriceFromPct('up')" style="padding-left:22px" />
+            </div>
+          </div>
         </div>
+        <div id="em-target-preview" style="font-size:11px;color:var(--green);margin-top:6px"></div>
       </div>
-      <div class="form-group">
-        <div class="form-label">目標上昇率（%）</div>
-        <div class="input-prefix-wrap">
-          <span class="input-prefix" style="display:block;font-size:11px;color:var(--text3)">+</span>
-          <input class="form-input" id="em-target-pct" type="number" placeholder="例: 20" step="0.1" oninput="calcTargetPriceFromPct()" style="padding-left:22px" />
+      <!-- 目標価格（下落・損切り） -->
+      <div class="form-group full" style="background:rgba(239,68,68,0.05);border:1px solid rgba(239,68,68,0.2);border-radius:10px;padding:10px">
+        <div style="font-size:11px;font-weight:600;color:var(--red);margin-bottom:8px">📉 損切りライン</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <div>
+            <div class="form-label" id="em-stop-label" style="font-size:11px">損切り価格</div>
+            <div class="input-prefix-wrap">
+              <span class="input-prefix" id="em-stop-prefix" style="display:none">$</span>
+              <input class="form-input" id="em-stop" type="number" placeholder="例: 2000" oninput="calcTargetPctFromPrice('down')" />
+            </div>
+          </div>
+          <div>
+            <div class="form-label" style="font-size:11px">下落率（%）</div>
+            <div class="input-prefix-wrap">
+              <span class="input-prefix" style="display:block;font-size:11px;color:var(--text3)">−</span>
+              <input class="form-input" id="em-stop-pct" type="number" placeholder="例: 10" step="0.1" oninput="calcTargetPriceFromPct('down')" style="padding-left:22px" />
+            </div>
+          </div>
         </div>
-        <div id="em-target-preview" style="font-size:11px;color:var(--teal-mid);margin-top:4px"></div>
+        <div id="em-stop-preview" style="font-size:11px;color:var(--red);margin-top:6px"></div>
       </div>
       <div class="form-group full">
         <div class="form-label">口座種別</div>
@@ -2838,14 +2891,27 @@ function openEditModal() {
   document.getElementById('em-shares').value = s.shares;
   document.getElementById('em-div').value    = isUS ? (s.div ? Math.round(s.div / rate * 100) / 100 : '') : (s.div || '');
   document.getElementById('em-target').value = isUS ? (s.targetPrice ? Math.round(s.targetPrice / rate * 100) / 100 : '') : (s.targetPrice || '');
-  // 目標%を初期化
+  document.getElementById('em-stop').value   = isUS ? (s.stopPrice  ? Math.round(s.stopPrice  / rate * 100) / 100 : '') : (s.stopPrice  || '');
+  // $ prefix for stop
+  var spx = document.getElementById('em-stop-prefix');
+  if (spx) spx.style.display = isUS ? '' : 'none';
+  // 上昇目標%
   if (s.targetPrice && s.buy) {
     var pct = ((s.targetPrice - s.buy) / s.buy * 100);
-    document.getElementById('em-target-pct').value = Math.round(pct * 10) / 10;
-    document.getElementById('em-target-preview').textContent = '取得価格から ' + (pct >= 0 ? '+' : '') + pct.toFixed(1) + '%';
+    document.getElementById('em-target-pct').value = Math.round(Math.abs(pct) * 10) / 10;
+    document.getElementById('em-target-preview').textContent = '取得価格から +' + pct.toFixed(1) + '%';
   } else {
     document.getElementById('em-target-pct').value = '';
     document.getElementById('em-target-preview').textContent = '';
+  }
+  // 下落目標%
+  if (s.stopPrice && s.buy) {
+    var spct = ((s.stopPrice - s.buy) / s.buy * 100);
+    document.getElementById('em-stop-pct').value = Math.round(Math.abs(spct) * 10) / 10;
+    document.getElementById('em-stop-preview').textContent = '取得価格から ' + spct.toFixed(1) + '%';
+  } else {
+    document.getElementById('em-stop-pct').value = '';
+    document.getElementById('em-stop-preview').textContent = '';
   }
   setEmAcct(s.acct || 'NISA');
   document.getElementById('sim-price').value  = '';
@@ -2871,24 +2937,32 @@ function setEmAcct(val) {
 }
 
 
-function calcTargetPctFromPrice() {
+function calcTargetPctFromPrice(dir) {
   var s = stocks[detailIdx]; if (!s) return;
-  var price = parseFloat(document.getElementById('em-target').value);
+  var isDown = dir === 'down';
+  var priceEl = document.getElementById(isDown ? 'em-stop' : 'em-target');
+  var pctEl   = document.getElementById(isDown ? 'em-stop-pct' : 'em-target-pct');
+  var prevEl  = document.getElementById(isDown ? 'em-stop-preview' : 'em-target-preview');
+  var price = parseFloat(priceEl.value);
   var buy = s.buy;
-  if (!price || !buy) { document.getElementById('em-target-pct').value = ''; document.getElementById('em-target-preview').textContent = ''; return; }
+  if (!price || !buy) { pctEl.value = ''; prevEl.textContent = ''; return; }
   var pct = ((price - buy) / buy * 100);
-  document.getElementById('em-target-pct').value = Math.round(pct * 10) / 10;
-  document.getElementById('em-target-preview').textContent = '取得価格から ' + (pct >= 0 ? '+' : '') + pct.toFixed(1) + '%';
+  pctEl.value = Math.round(Math.abs(pct) * 10) / 10;
+  prevEl.textContent = '取得価格から ' + (pct >= 0 ? '+' : '') + pct.toFixed(1) + '%';
 }
 
-function calcTargetPriceFromPct() {
+function calcTargetPriceFromPct(dir) {
   var s = stocks[detailIdx]; if (!s) return;
-  var pct = parseFloat(document.getElementById('em-target-pct').value);
+  var isDown = dir === 'down';
+  var priceEl = document.getElementById(isDown ? 'em-stop' : 'em-target');
+  var pctEl   = document.getElementById(isDown ? 'em-stop-pct' : 'em-target-pct');
+  var prevEl  = document.getElementById(isDown ? 'em-stop-preview' : 'em-target-preview');
+  var pct = parseFloat(pctEl.value);
   var buy = s.buy;
-  if (pct === undefined || isNaN(pct) || !buy) { document.getElementById('em-target-preview').textContent = ''; return; }
-  var price = buy * (1 + pct / 100);
-  document.getElementById('em-target').value = Math.round(price * 100) / 100;
-  document.getElementById('em-target-preview').textContent = '目標価格: ' + (s.market === 'US' ? '$' + price.toFixed(2) : '¥' + Math.round(price).toLocaleString());
+  if (isNaN(pct) || !buy) { prevEl.textContent = ''; return; }
+  var price = isDown ? buy * (1 - pct / 100) : buy * (1 + pct / 100);
+  priceEl.value = Math.round(price * 100) / 100;
+  prevEl.textContent = (isDown ? '損切り価格: ' : '目標価格: ') + (s.market === 'US' ? '$' + price.toFixed(2) : '¥' + Math.round(price).toLocaleString());
 }
 
 function calcAvg() {
@@ -2943,6 +3017,7 @@ function saveEdit() {
   var shares = parseInt(document.getElementById('em-shares').value);
   var div    = parseFloat(document.getElementById('em-div').value) || 0;
   var target = parseFloat(document.getElementById('em-target').value) || null;
+  var stop   = parseFloat(document.getElementById('em-stop').value)   || null;
   var acct   = document.getElementById('em-acct').value;
   if (!buy || !shares) { alert('取得価格と株数は必須です'); return; }
   // US株は入力値（ドル）→円に変換して保存
@@ -2950,6 +3025,7 @@ function saveEdit() {
   stocks[detailIdx].shares      = shares;
   stocks[detailIdx].div         = isUS ? Math.round(div * rate * 100) / 100 : div;
   stocks[detailIdx].targetPrice = target ? (isUS ? Math.round(target * rate * 100) / 100 : target) : null;
+  stocks[detailIdx].stopPrice   = stop   ? (isUS ? Math.round(stop   * rate * 100) / 100 : stop)   : null;
   stocks[detailIdx].acct        = acct;
   saveData();
   render();
